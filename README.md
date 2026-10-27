@@ -6,7 +6,9 @@ Automatic HTTPS for an existing Docker Compose application, using Let's Encrypt 
 
 You need Docker/Compose 2.18+, Just, and a domain managed by Cloudflare.
 
-**1. Add the proxy to your application.** Merge the service and volumes from [examples/compose.yaml](examples/compose.yaml) into your existing `compose.yaml`, and the recipes from [examples/justfile](examples/justfile) into your `justfile`. The example adds only `proxy-plan`, `proxy-up`, and `proxy-verify` to the public menu. If your project already has a deployment recipe, [integrate preparation into it](docs/reference.md#integrate-with-existing-project-recipes) instead of adding `proxy-up`; reuse existing logs, status, and stop recipes. Keep your existing app service. The proxy must share its Docker network; your app does not need a published host port. Set `PROXY_COMPOSE_FILE` and `PROXY_SERVICE` at the top of your `justfile` if the filename or service name differs; do not rename an existing service just for this integration. The proxy recipes use `--no-deps`; start the app through its own workflow. If replacing an existing proxy, first read [migration and recovery](docs/reference.md#installation-migration-and-recovery).
+**1. Add the proxy to your application.** Merge the service and volumes from [examples/compose.yaml](examples/compose.yaml) into your existing `compose.yaml`, and the recipes from [examples/justfile](examples/justfile) into your `justfile`. Keep your app service and share its Docker network with the proxy; the app does not need a published host port. Set `PROXY_COMPOSE_FILE` and `PROXY_SERVICE` at the top of your `justfile` to match your existing filename and service name.
+
+If your project already has a deployment recipe, [integrate preparation into it](docs/reference.md#integrate-with-existing-project-recipes) instead of adding `proxy-up`. If replacing an existing proxy, first read [migration and recovery](docs/reference.md#installation-migration-and-recovery).
 
 **2. Set the environment.** Add these values to your application's private `.env`:
 
@@ -20,11 +22,13 @@ CLOUDFLARE_ZONE_ID=<your-zone-id>
 CLOUDFLARE_API_TOKEN=<your-token>
 ```
 
-Replace `app:8080` with your app's Compose service name and port. Use a hostname in your zone and an IP reachable by your clients. The token needs **Zone DNS Edit** and **Zone Read**, scoped to that zone. Keep `.env` ignored by Git.
+Replace `app:8080` with your app's Compose service name and port. Use a hostname in your zone and an IP reachable by your clients. The token needs **Zone DNS Edit** and **Zone Read**, scoped to that zone. Keep `.env` ignored by Git; [examples/gitignore.fragment](examples/gitignore.fragment) provides the rules.
+
+See [examples/.env.example](examples/.env.example) for optional settings and the [configuration reference](docs/reference.md#configuration) for accepted values.
 
 The image is public: no GitHub account or registry login is needed. [Releases](https://github.com/lingmann/caddy-cloudflare-proxy/releases) list available versions, matching examples, and optional digest pins.
 
-**3. Start it.** If you kept the standalone `proxy-up` recipe, start your app through its normal workflow, then run:
+**3. Start it.** For the standalone workflow, start your app through its normal workflow—the proxy recipes use `--no-deps`—then run:
 
 ```sh
 chmod 600 .env
@@ -34,7 +38,7 @@ just proxy-up      # Validate, apply DNS, and start/update only the proxy
 just proxy-verify  # Verify trusted HTTPS and the expected application response
 ```
 
-Direct Compose commands above use the default filename and service name; substitute your configured values when different. If you integrated preparation into the application’s existing deployment recipe instead, secure `.env` with `chmod 600 .env`, pull the proxy image, review `just proxy-plan`, then run that deployment recipe. It must prepare before replacing either service and run `proxy-verify` after both services start. You can also run `just proxy-verify` independently.
+Direct Compose commands above use the default filename and service name; substitute your configured values when different. For an integrated deployment, run the commands above with your deployment recipe in place of `just proxy-up`. It must prepare before replacing either service and verify after both services start.
 
 Open `https://app.example.com`. Certificates are issued and renewed automatically. No port 80 or public inbound access is needed for certificate issuance; clients still need a route to the proxy. HTTPS does not add application authentication.
 
@@ -52,13 +56,7 @@ That's it—consumers do not build this image or install Python. For a different
 
 ## Update the image
 
-Retain the previous image reference and configuration for [recovery](docs/reference.md#recover-a-failed-replacement). Set `PROXY_IMAGE` in `.env` to the new release's version tag and use the matching recipes. Pull the image with `docker compose -f compose.yaml pull proxy` (substitute your filename and service), then run the application’s integrated deployment recipe. For the standalone workflow:
-
-```sh
-docker compose -f compose.yaml pull proxy
-just proxy-up
-just proxy-verify
-```
+Retain the previous image reference and configuration for [recovery](docs/reference.md#recover-a-failed-replacement). Set `PROXY_IMAGE` in `.env` to the new release's version tag and use the matching recipes. Pull the image with `docker compose -f compose.yaml pull proxy` (substitute your filename and service), then run your deployment recipe and `just proxy-verify`. For the standalone workflow, the deployment recipe is `just proxy-up`.
 
 Keep the existing certificate volumes. Container restarts do not reconcile application DNS records; Caddy still manages its own certificate challenge records.
 
