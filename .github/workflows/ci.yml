@@ -1,8 +1,14 @@
 name: Test and release
 on:
   push:
+    branches: ['**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'New stable version (for example v1.0.1); releases run from main only'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -13,10 +19,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - name: Validate release version
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate release request
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
         shell: bash
-        run: '[[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo 'Releases must run from main.' >&2
+            exit 1
+          fi
+          python3 scripts/check_release.py --version "$VERSION" --validate-only
       - uses: taiki-e/install-action@v2
         with:
           tool: just
@@ -26,37 +42,49 @@ jobs:
       - run: just test
       - run: just test-integration
       # Cross-platform builds belong in GitHub, not the local development loop.
-      - run: docker buildx build --platform linux/amd64,linux/arm64 --target test --output type=cacheonly .
-      - run: docker buildx build --platform linux/amd64,linux/arm64 --target release --output type=cacheonly .
+      - name: Test both architectures and export the shared build cache
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: test
+          platforms: linux/amd64,linux/arm64
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=multiarch
+          cache-to: type=gha,scope=multiarch,mode=max
+      - name: Build both release architectures for normal CI
+        if: github.event_name != 'workflow_dispatch'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: release
+          platforms: linux/amd64,linux/arm64
+          outputs: type=cacheonly
 
   publish:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: release-${{ github.ref }}
+      group: release-publication
       cancel-in-progress: false
     permissions:
       contents: write
       packages: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Set image name
         id: image
         shell: bash
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-      - name: Refuse an existing release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          # A failed lookup alone is not proof that a release is absent.
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name' > /tmp/release-tags
-          if grep -Fxq "$GITHUB_REF_NAME" /tmp/release-tags; then
-            echo 'This version already has a release; use a new version.' >&2
-            exit 1
-          fi
+      - name: Require an unused version
+        run: python3 scripts/check_release.py --version "$VERSION"
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
@@ -64,21 +92,35 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v7
+      - name: Build and push a candidate, not a release version
+        uses: docker/build-push-action@v7
         id: build
         with:
           context: .
           target: release
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.image.outputs.name }}:${{ github.ref_name }}
+          tags: ${{ steps.image.outputs.name }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: type=gha,scope=multiarch
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.version=${{ inputs.version }}
           provenance: true
           sbom: true
-      - name: Verify the published index and images
+      - name: Record candidate for recovery
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          printf '%s\n' \
+            '## Release candidate (not yet verified)' \
+            "Version: \`$VERSION\`" \
+            "Commit: \`$GITHUB_SHA\`" \
+            "Candidate: \`$IMAGE:candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\`" \
+            "Digest reference: \`$IMAGE@$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify the candidate index and images
         env:
           IMAGE: ${{ steps.image.outputs.name }}
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -100,19 +142,38 @@ jobs:
           docker run --rm --platform linux/arm64 --network none \
             -e PROXY_HOSTNAMES=service.example.com -e PROXY_UPSTREAM=app:8080 \
             -e CLOUDFLARE_API_TOKEN=0000000000000000000000000000000000000000 "$ref" check
+          printf '\n%s\n' 'Candidate verification passed. This digest is eligible for promotion.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Promote the verified index without rebuilding
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Check again after the build. Never deliberately overwrite an existing version.
+          python3 scripts/check_release.py --version "$VERSION"
+          # A single index source is copied intact, including its attestations.
+          docker buildx imagetools create --tag "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
+          actual="$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}')"
+          if [[ "$actual" != "$DIGEST" ]]; then
+            echo 'Promoted digest differs from the verified candidate. Stop and inspect; do not overwrite it.' >&2
+            exit 1
+          fi
+          printf '\n%s\n' "Published verified image: \`$IMAGE:$VERSION@$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Create the Git tag at the tested commit
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$VERSION" -f "sha=$GITHUB_SHA" > /dev/null
       - name: Create release
         env:
-          GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ steps.image.outputs.name }}
           DIGEST: ${{ steps.build.outputs.digest }}
         shell: bash
         run: |
           printf '%s\n' \
             'Verified image for linux/amd64 and linux/arm64. Set this in your .env:' \
-            "\`PROXY_IMAGE=$IMAGE:$GITHUB_REF_NAME\`" \
+            "\`PROXY_IMAGE=$IMAGE:$VERSION\`" \
             '' \
             "Optional digest pin: \`$IMAGE@$DIGEST\`" \
             '' \
-            "[Quickstart and examples](https://github.com/$GITHUB_REPOSITORY/tree/$GITHUB_REF_NAME#quickstart)." > /tmp/release-notes.md
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
+            "[Quickstart and examples](https://github.com/$GITHUB_REPOSITORY/tree/$VERSION#quickstart)." > /tmp/release-notes.md
+          gh release create "$VERSION" --verify-tag --title "$VERSION" \
             --notes-file /tmp/release-notes.md

@@ -27,7 +27,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD ["pro
 
 FROM runtime AS test
 COPY tests/test_*.py /opt/tests/
-COPY scripts/update_deps.py /opt/scripts/update_deps.py
+COPY scripts/ /opt/scripts/
 ENV PYTHONPATH=/opt/proxy
 RUN --network=none python3 -m unittest discover -s /opt/tests -v
 
