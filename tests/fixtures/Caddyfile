@@ -1,0 +1,9 @@
+{
+	auto_https disable_redirects
+	skip_install_trust
+}
+
+{$PROXY_HOSTNAMES} {
+	tls internal
+	reverse_proxy {$PROXY_UPSTREAM}
+}

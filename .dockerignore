@@ -1,0 +1,9 @@
+**
+!Dockerfile
+!Caddyfile
+!src/
+!src/*.py
+!tests/
+!tests/test_*.py
+!scripts/
+!scripts/update_deps.py

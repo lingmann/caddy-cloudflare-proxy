@@ -1,0 +1,53 @@
+set default-list
+
+# Preview DNS-only Cloudflare record changes; never writes DNS.
+dns-plan:
+    docker compose -f compose.yaml run --rm --no-deps -T proxy dns-plan
+
+# Reconcile only address records. Review dns-plan first.
+dns-sync:
+    docker compose -f compose.yaml run --rm --no-deps -T proxy dns-sync
+
+# Validate the host port and probe new bindings without stopping the existing proxy.
+proxy-preflight:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docker compose -f compose.yaml config --quiet
+    running="$(docker compose -f compose.yaml ps --status running --format json proxy)"
+    mode="$(docker compose -f compose.yaml config --format json | docker compose -f compose.yaml run --rm --no-deps -T proxy preflight --running "$running")"
+    case "$mode" in
+        reuse) printf '%s\n' 'The running proxy already owns this host binding; no bind probe needed.' ;;
+        probe) docker compose -f compose.yaml run --rm --no-deps -T --service-ports proxy bind-check ;;
+        *) printf '%s\n' 'Unexpected preflight result; refusing deployment.' >&2; exit 1 ;;
+    esac
+
+# Validate deployment settings and Caddy without DNS access.
+proxy-check: proxy-preflight
+    docker compose -f compose.yaml run --rm --no-deps -T proxy check
+
+# Preflight and prepare before replacement; wait up to 90s for listener health, not TLS.
+proxy-up: proxy-preflight
+    docker compose -f compose.yaml run --rm --no-deps -T proxy prepare
+    docker compose -f compose.yaml up -d --no-deps --force-recreate --wait --wait-timeout 90 proxy
+
+# Check trusted HTTPS and the configured status/body from a temporary client container.
+proxy-verify:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docker compose -f compose.yaml config --format json | docker compose -f compose.yaml run --rm --no-deps -T proxy verify --from-compose
+
+# Validate and reload a custom mounted Caddyfile with the current container environment.
+proxy-reload:
+    docker compose -f compose.yaml exec -T proxy proxy reload
+
+# Show proxy status, including a stopped container.
+proxy-status:
+    docker compose -f compose.yaml ps --all proxy
+
+# Follow the latest proxy logs; Ctrl+C leaves the proxy running.
+proxy-logs:
+    docker compose -f compose.yaml logs --tail=50 --follow proxy
+
+# Stop only the proxy. Preserve application data and certificate volumes.
+proxy-stop:
+    docker compose -f compose.yaml stop proxy

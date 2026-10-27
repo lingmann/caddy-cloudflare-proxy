@@ -1,0 +1,30 @@
+# Merge into the application's Compose file; this fragment defines only the proxy.
+services:
+  proxy:
+    image: ${PROXY_IMAGE:?Set PROXY_IMAGE to a published version tag}
+    ports:
+      - target: 443
+        published: "${CADDY_HTTPS_PORT:-443}"
+        host_ip: ${CADDY_BIND_IP:?Set CADDY_BIND_IP to the intended host interface IP}
+        protocol: tcp
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      # Optional custom configuration; the image includes the default Caddyfile.
+      # - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    environment:
+      PROXY_HOSTNAMES: ${PROXY_HOSTNAMES:?Set PROXY_HOSTNAMES in .env}
+      PROXY_UPSTREAM: ${PROXY_UPSTREAM:?Set PROXY_UPSTREAM in .env}
+      PROXY_DNS_TARGET: ${PROXY_DNS_TARGET:-}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+      PROXY_VERIFY_PATH: ${PROXY_VERIFY_PATH:-/}
+      PROXY_VERIFY_STATUS: ${PROXY_VERIFY_STATUS:-200}
+      PROXY_VERIFY_BODY: ${PROXY_VERIFY_BODY:-}
+      PROXY_VERIFY_TIMEOUT: ${PROXY_VERIFY_TIMEOUT:-120}
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
