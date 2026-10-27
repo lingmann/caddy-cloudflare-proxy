@@ -20,7 +20,7 @@
 
 Compose reads `.env` for interpolation, and exported variables take precedence. The example's `environment` section passes only selected settings to the container environment. Credentials belong in runtime environment variables, never build arguments, source files, or committed examples. Docker administrators can inspect container secrets; do not dump resolved Compose configuration or container environments into logs.
 
-The template supports one zone, one DNS target, and one upstream. Separate proxy instances or a deliberately extended configuration are needed for other layouts. Do not treat the image as a Docker auto-discovery controller: it has no Docker socket access and does not find backends automatically.
+The template supports one zone, one DNS target, and one upstream. Separate proxy instances or a deliberately extended configuration are needed for other layouts. The image has no Docker socket access and does not find backends automatically.
 
 ## Container commands
 
@@ -68,7 +68,7 @@ Use the same settings for preparation, deployment, verification, and direct Comp
 
 Keep the public integration small: `proxy-plan`, `proxy-up`, and `proxy-verify`. The `proxy-` prefix belongs to consumer recipes; the container commands keep their existing names. `proxy-plan` previews DNS changes only, not container changes or a complete deployment.
 
-If the application already has a deployment recipe, omit `proxy-up` and keep only `proxy-plan` and `proxy-verify` as new public recipes. Copy the host-side settings and all private helpers from `examples/justfile`. Make `_proxy-prepare` a dependency of the existing deployment recipe, before any command or dependency that stops or replaces either service. It runs preflight, validates Caddy, and reconciles DNS. Do not use `proxy-up` as preparation: it also replaces the proxy.
+If the application already has a deployment recipe, omit `proxy-up` and keep only `proxy-plan` and `proxy-verify` as new public recipes. Copy the host-side settings and all private helpers from `examples/justfile`. Make `_proxy-prepare` a dependency of the existing deployment recipe, before any command or dependency that stops or replaces either service. It runs preflight, validates Caddy, and reconciles DNS. Do not use `proxy-up` as preparation. It also replaces the proxy.
 
 After preparation succeeds, deploy the application and recreate the proxy with a bounded health wait. Preserve the proxy's `--force-recreate --wait --wait-timeout 90` behavior so prepared configuration takes effect even if Compose detects no service changes. Run `just proxy-verify` after both services are running. Keep it public for independent checks. See [deployment behavior](#deployment-behavior) for failure and verification limits.
 
@@ -80,7 +80,7 @@ Reuse the application's logs, status, and stop recipes for both services. Stoppi
 
 For a new installation, select the explicit host binding, client-reachable DNS target, application network, and persistent volumes. For a migration, first inventory the existing hostnames, routing, authentication, published ports, service names, Compose project identity, and actual certificate volume names. Preserve application security policy in its custom Caddyfile; do not replace it with the default just to adopt this image.
 
-Keep the existing project identity and `/data` and `/config` volume mappings. If importing volumes from another Compose project, explicitly reference those existing volumes rather than letting Compose create empty ones. Keep the service name where possible. Moving a binding owned by another service is not automated: preflight refuses the conflict. Plan a separate cutover instead of disabling the guard.
+Keep the existing project identity and `/data` and `/config` volume mappings. If importing volumes from another Compose project, explicitly reference those existing volumes rather than letting Compose create empty ones. Keep the service name where possible. Preflight refuses a binding owned by another service. Plan a separate cutover instead of disabling the guard.
 
 Before changing a running installation:
 
@@ -151,13 +151,13 @@ docker compose -f compose.yaml stop proxy
 
 ## DNS behavior and limits
 
-The reconciler uses Cloudflare's zone API and requires zone-scoped DNS Edit plus Zone Read. It validates zone membership, checks ancestor names for NS delegations below the zone apex, and reads all pages before writing anything. Refuse a delegated child name in its parent zone: use the authoritative child zone instead.
+The reconciler uses Cloudflare's zone API and requires zone-scoped DNS Edit plus Zone Read. It validates zone membership, checks ancestor names for NS delegations below the zone apex, and reads all pages before writing anything. For a delegated child name, use its authoritative child zone instead of the parent zone.
 
 - IPv4 targets become `A`, IPv6 targets become `AAAA`, and hostname targets become `CNAME` without local resolution.
 - Records use `proxied=false` and TTL 300. An unchanged apply performs no writes.
-- Updates PATCH only changed content, proxy status, or TTL. Preserve comments, tags, unrelated records, and Caddy's `_acme-challenge` TXT records.
-- Refuse duplicate address records, mixed A/AAAA sets, type migrations, and CNAME conflicts. Never delete records automatically, including old names after configuration changes.
-- Reject direct CNAME loops to configured names. Indirect loops and reachability are not checked.
+- The reconciler uses PATCH to update only changed content, proxy status, or TTL. It preserves comments, tags, unrelated records, and Caddy's `_acme-challenge` TXT records.
+- It refuses duplicate address records, mixed A/AAAA sets, type migrations, and CNAME conflicts. It never deletes records automatically, including old names after configuration changes.
+- It rejects direct CNAME loops to configured names. It does not check indirect loops or reachability.
 - Keep the shared lock at `/data/.dns-sync.lock`. It coordinates operator containers sharing that volume, not other volumes, hosts, or external DNS writers. Never unlink it while operations can run.
 - Writes across names are not atomic and are not retried automatically. After a partial failure, inspect a fresh plan and reconcile again. A network error can occur after Cloudflare accepted a write.
 
@@ -167,7 +167,7 @@ The script blocks redirects, applies a request timeout, and redacts transport er
 
 DNS-01 does not need inbound port 80 or public access to the origin. Private LAN/Tailscale clients can use publicly trusted certificates without router forwarding. They still need routing and firewall access to the explicit host IP and selected TCP port. Public deployments need public routing/NAT and a reviewed authentication boundary.
 
-The template publishes no HTTP port, HTTP/3 UDP port, or Caddy admin port. Keep the backend off public host ports. A loopback-published backend remains reachable by host processes, bypassing Caddy. HTTPS is not authentication: the default Caddyfile preserves the application's Authorization header and does not add authentication.
+The template publishes no HTTP port, HTTP/3 UDP port, or Caddy admin port. Keep the backend off public host ports. A loopback-published backend remains reachable by host processes, bypassing Caddy. HTTPS is not authentication. The default Caddyfile preserves the application's Authorization header and does not add authentication.
 
 Use an upstream reachable from the container:
 
@@ -184,7 +184,7 @@ Names and DNS targets are public, and certificate names appear in Certificate Tr
 
 ## Custom configuration and persistent state
 
-For routing or authentication beyond the default, mount a complete custom Caddyfile at `/etc/caddy/Caddyfile:ro`. Start from this repository's `Caddyfile`. Keep the environment contract: serving commands still validate hostnames, upstream, token, and ACME URL. Changing custom routing does not change which names the DNS reconciler owns.
+For routing or authentication beyond the default, mount a complete custom Caddyfile at `/etc/caddy/Caddyfile:ro`. Start from this repository's `Caddyfile`. Serving commands still validate hostnames, upstream, token, and ACME URL. Changing custom routing does not change which names the DNS reconciler owns.
 
 `check` validates a custom file but cannot enforce every custom security or network property. A custom configuration is trusted code; review its authentication, issuer, storage, admin listener, and logging choices. The healthcheck assumes TCP 443 remains available.
 
@@ -198,5 +198,5 @@ For repeated ACME experiments use `ACME_CA=https://acme-staging-v02.api.letsencr
 
 Preflight rejects invalid host ports before DNS writes. For a new binding it briefly asks Docker to allocate the configured port, without starting a listener. It skips that probe when the running proxy owns the identical binding. This catches many bind conflicts, but cannot reserve the port across deployment or prove client routing. It never stops the existing proxy to make room.
 
-`proxy-verify` checks all configured names from a temporary client container using normal DNS, trusted TLS, and an expected HTTP status/optional body marker. It has a total deadline, does not follow redirects, and sends no authentication credentials. Configure a safe GET endpoint. Repeat verification from an intended client without bypassing certificate checks: Docker routing and DNS can differ from the client's.
+`proxy-verify` checks all configured names from a temporary client container using normal DNS, trusted TLS, and an expected HTTP status/optional body marker. It has a total deadline, does not follow redirects, and sends no authentication credentials. Configure a safe GET endpoint. Repeat verification from an intended client without bypassing certificate checks. Docker routing and DNS can differ from the client's.
 

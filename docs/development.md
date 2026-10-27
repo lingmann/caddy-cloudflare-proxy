@@ -31,4 +31,4 @@ git push origin v1.0.0
 
 The single GitHub workflow tests pushes and pull requests. Only a `vMAJOR.MINOR.PATCH` tag push can publish, after the tests pass. It builds both architectures, verifies the published image, and creates release notes with the version tag and an optional digest pin. There is no custom release package. Never move released tags or overwrite released image versions.
 
-The repository and GHCR package must both be public for anonymous installation. GitHub makes new packages private by default: after the first publication, set the package visibility to public and verify an anonymous pull. This is a one-time owner setting, not a consumer setup step. Publishing still authenticates with the workflow's `GITHUB_TOKEN`.
+The repository and GHCR package must both be public for anonymous installation. GitHub makes new packages private by default. After the first publication, set the package visibility to public and verify an anonymous pull. This is a one-time owner setting, not a consumer setup step. Publishing still authenticates with the workflow's `GITHUB_TOKEN`.

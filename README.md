@@ -26,9 +26,9 @@ Replace `app:8080` with your app's Compose service name and port. Use a hostname
 
 See [examples/.env.example](examples/.env.example) for optional settings and the [configuration reference](docs/reference.md#configuration) for accepted values.
 
-The image is public: no GitHub account or registry login is needed. [Releases](https://github.com/lingmann/caddy-cloudflare-proxy/releases) list available versions, matching examples, and optional digest pins.
+The image is public. You do not need a GitHub account or registry login. [Releases](https://github.com/lingmann/caddy-cloudflare-proxy/releases) list available versions, matching examples, and optional digest pins.
 
-**3. Start it.** For the standalone workflow, start your app through its normal workflow—the proxy recipes use `--no-deps`—then run:
+**3. Start it.** The standalone proxy recipes use `--no-deps` and do not start your app. Start the app through its normal workflow, then run:
 
 ```sh
 chmod 600 .env
@@ -42,7 +42,7 @@ Direct Compose commands above use the default filename and service name; substit
 
 Open `https://app.example.com`. Certificates are issued and renewed automatically. No port 80 or public inbound access is needed for certificate issuance; clients still need a route to the proxy. HTTPS does not add application authentication.
 
-That's it—consumers do not build this image or install Python. For a different HTTPS port, set `CADDY_HTTPS_PORT` and include it in the URL.
+Consumers do not need to build this image or install Python. For a different HTTPS port, set `CADDY_HTTPS_PORT` and include it in the URL.
 
 ## Common commands
 
@@ -74,4 +74,4 @@ just update-deps      # Update dependency pins only; no build or deployment
 
 [Dockerfile](Dockerfile) is the source of truth for Caddy and Cloudflare provider versions and official image digest pins. Cloudflare is the only non-standard Caddy module. Local builds stay native; GitHub handles amd64/arm64 builds. Consumers need Docker/Compose and Just, not Go or Python.
 
-See [maintainer instructions](docs/development.md) for dependency updates and publishing. Tests use fake credentials, an isolated network, and a disposable CA—never live Cloudflare or public ACME.
+See [maintainer instructions](docs/development.md) for dependency updates and publishing. Tests use fake credentials, an isolated network, and a disposable CA. They never use live Cloudflare or public ACME.
