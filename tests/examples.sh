@@ -55,8 +55,11 @@ STUB
 chmod +x bin/docker
 export PATH="$tmp/bin:$PATH"
 just --fmt --check
-just --list >/dev/null
-for recipe in dns-plan dns-sync proxy-preflight proxy-check proxy-up proxy-verify proxy-reload proxy-status proxy-logs proxy-stop; do
+just --list > listed
+just > default-list
+diff -u listed default-list
+[ "$(just --summary)" = 'proxy-plan proxy-up proxy-verify' ]
+for recipe in proxy-plan proxy-up proxy-verify; do
     just --usage "$recipe" >/dev/null
     just --dry-run "$recipe" >/dev/null 2>&1
 done
@@ -65,13 +68,13 @@ just proxy-up >/dev/null 2>&1
 printf '%s\n' config preflight bind prepare up > expected
 diff -u expected "$PHASE_LOG"
 grep -q 'up -d --no-deps --force-recreate --wait --wait-timeout 90 proxy' "$CALL_LOG"
-for phase in config json ps preflight bind prepare; do
+for phase in config json ps preflight bind prepare up; do
     : > "$CALL_LOG"; : > "$PHASE_LOG"
     if FAIL_PHASE="$phase" just proxy-up >/dev/null 2>&1; then
         echo "Deployment ignored $phase failure" >&2; exit 1
     fi
-    if grep -q '^up$' "$PHASE_LOG"; then echo 'Failed preflight/preparation still deployed' >&2; exit 1; fi
-    if [ "$phase" != prepare ] && grep -q '^prepare$' "$PHASE_LOG"; then
+    if [ "$phase" != up ] && grep -q '^up$' "$PHASE_LOG"; then echo 'Failed preflight/preparation still deployed' >&2; exit 1; fi
+    if [ "$phase" != prepare ] && [ "$phase" != up ] && grep -q '^prepare$' "$PHASE_LOG"; then
         echo 'Failed preflight still allowed DNS preparation' >&2; exit 1
     fi
 done
@@ -83,13 +86,19 @@ if PREFLIGHT_MODE=unexpected just proxy-up >/dev/null 2>&1; then
     echo 'Unknown preflight result accepted' >&2; exit 1
 fi
 : > "$CALL_LOG"
-just dns-plan dns-sync proxy-reload proxy-stop >/dev/null 2>&1
-printf '%s\n' 'compose -f compose.yaml run --rm --no-deps -T proxy dns-plan' \
-    'compose -f compose.yaml run --rm --no-deps -T proxy dns-sync' \
-    'compose -f compose.yaml exec -T proxy proxy reload' \
-    'compose -f compose.yaml stop proxy' > expected
+just proxy-plan >/dev/null 2>&1
+printf '%s\n' 'compose -f compose.yaml run --rm --no-deps -T proxy dns-plan' > expected
 diff -u expected "$CALL_LOG"
+# The reusable preparation helper never replaces a container.
+: > "$PHASE_LOG"
+just _proxy-prepare >/dev/null 2>&1
+printf '%s\n' config preflight bind prepare > expected
+diff -u expected "$PHASE_LOG"
+: > "$CALL_LOG"; : > "$PHASE_LOG"
 just proxy-verify >/dev/null 2>&1
+printf '%s\n' verify > expected
+diff -u expected "$PHASE_LOG"
+grep -q 'run --rm --no-deps -T proxy verify --from-compose' "$CALL_LOG"
 for phase in json verify; do
     if FAIL_PHASE="$phase" just proxy-verify >/dev/null 2>&1; then
         echo "Verification ignored $phase failure" >&2; exit 1
@@ -108,4 +117,4 @@ just --justfile "$root/justfile" --dry-run update-deps >/dev/null 2>&1
 just --justfile "$root/justfile" update-deps >/dev/null 2>&1
 printf '%s\n' 'python3 scripts/update_deps.py' > expected
 diff -u expected "$CALL_LOG"
-echo 'Operator examples passed: Compose/Just, binding preflight, preparation guards, listener wait, verification, exec semantics, and update-only recipe.'
+echo 'Operator examples passed: three public recipes, Compose/Just, private preparation, binding preflight, preparation guards, listener wait, verification, and update-only recipe.'

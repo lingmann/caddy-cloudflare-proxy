@@ -6,7 +6,7 @@ Automatic HTTPS for an existing Docker Compose application, using Let's Encrypt 
 
 You need Docker/Compose 2.18+, Just, and a domain managed by Cloudflare.
 
-**1. Add the proxy to your application.** Merge the service and volumes from [examples/compose.yaml](examples/compose.yaml) into your existing `compose.yaml`, and the recipes from [examples/justfile](examples/justfile) into your `justfile`. Keep your existing app service. The proxy must share its Docker network; your app does not need a published host port. Adjust the recipes' `-f compose.yaml` if your Compose file has another name.
+**1. Add the proxy to your application.** Merge the service and volumes from [examples/compose.yaml](examples/compose.yaml) into your existing `compose.yaml`, and the recipes from [examples/justfile](examples/justfile) into your `justfile`. The example adds only `proxy-plan`, `proxy-up`, and `proxy-verify` to the public menu. If your project already has a deployment recipe, [integrate preparation into it](docs/reference.md#integrate-with-existing-project-recipes) instead of adding `proxy-up`; reuse existing logs, status, and stop recipes. Keep your existing app service. The proxy must share its Docker network; your app does not need a published host port. Adjust the recipes' `-f compose.yaml` if your Compose file has another name.
 
 **2. Set the environment.** Add these values to your application's private `.env`:
 
@@ -24,13 +24,16 @@ Replace `app:8080` with your app's Compose service name and port. Use a hostname
 
 The image is public: no GitHub account or registry login is needed. [Releases](https://github.com/lingmann/caddy-cloudflare-proxy/releases) list available versions, matching examples, and optional digest pins.
 
-**3. Start it.** Start your app through its normal workflow, then run:
+**3. Start it.** If you kept the standalone `proxy-up` recipe, start your app through its normal workflow, then run:
 
 ```sh
 chmod 600 .env
-just dns-plan     # Review the proposed DNS changes
-just proxy-up    # Apply DNS and start/update only the proxy
+just proxy-plan    # Review DNS changes only; not a full deployment plan
+just proxy-up      # Validate, apply DNS, and start/update only the proxy
+just proxy-verify  # Verify trusted HTTPS and the expected application response
 ```
+
+If you integrated preparation into the application’s existing deployment recipe instead, secure `.env` with `chmod 600 .env`, review `just proxy-plan`, then run that deployment recipe. It must prepare before replacing either service and run `proxy-verify` after both services start. You can also run `just proxy-verify` independently.
 
 Open `https://app.example.com`. Certificates are issued and renewed automatically. No port 80 or public inbound access is needed for certificate issuance; clients still need a route to the proxy. HTTPS does not add application authentication.
 
@@ -40,17 +43,15 @@ That's it—consumers do not build this image or install Python. For a different
 
 | Command | Purpose |
 | --- | --- |
-| `just proxy-check` | Check port settings and Caddy configuration without DNS writes. |
+| `just proxy-plan` | Preview Cloudflare DNS changes without writing. |
+| `just proxy-up` | Prepare and start/update only the proxy. |
 | `just proxy-verify` | Verify trusted HTTPS and the expected application response from Docker. |
-| `just proxy-status` | Show proxy status. |
-| `just proxy-logs` | Follow proxy logs. |
-| `just proxy-stop` | Stop only the proxy, preserving certificates and the app. |
 
-`proxy-verify` expects HTTP 200 by default; configure the expected status/path for your app. See [configuration and operations](docs/reference.md) for all settings, networking, custom Caddyfiles, and DNS behavior.
+`proxy-verify` expects HTTP 200 by default; configure the expected status/path for your app. Also verify HTTPS from an intended client without bypassing certificate checks. Use your project's existing recipes for logs, status, and stopping services. See [maintenance commands](docs/reference.md#maintenance-commands) for proxy-only operations, validation, DNS-only reconciliation, and custom Caddyfile reloads.
 
 ## Update the image
 
-Set `PROXY_IMAGE` in `.env` to the new release's version tag, then run:
+Set `PROXY_IMAGE` in `.env` to the new release's version tag. Pull the image with `docker compose -f compose.yaml pull proxy`, then run the application’s integrated deployment recipe. For the standalone workflow:
 
 ```sh
 docker compose -f compose.yaml pull proxy

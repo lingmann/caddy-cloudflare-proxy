@@ -85,7 +85,7 @@ def main(argv=None):
     for name, description in descriptions.items():
         command = commands.add_parser(name, help=description, description=description,
                                       epilog=f"Example: proxy {name}" if name not in ("preflight", "verify") else
-                                      ("Example: just proxy-preflight" if name == "preflight" else "Example: proxy verify --port 9443"))
+                                      ("Example: just _proxy-preflight" if name == "preflight" else "Example: proxy verify --port 9443"))
         if name == "preflight":
             command.add_argument("--running", default="", help="JSON from docker compose ps --status running --format json proxy")
         if name == "verify":

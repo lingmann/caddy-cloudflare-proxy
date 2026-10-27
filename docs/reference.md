@@ -35,7 +35,7 @@ The entrypoint is `proxy`; its default command is `serve`.
 | `serve` | Validate serving inputs and Caddy, then `exec` Caddy as PID 1. Never reconcile address records. |
 | `reload` | Validate and reload the mounted Caddyfile using the current container environment. |
 | `healthcheck` | Check the local TCP 443 listener. Does not prove certificate validity, upstream readiness, or client reachability. |
-| `preflight` | Read resolved Compose JSON on stdin; validate one explicit host-IP/TCP-443 mapping and select a Docker bind probe or reuse. Normally use `just proxy-preflight`. |
+| `preflight` | Read resolved Compose JSON on stdin; validate one explicit host-IP/TCP-443 mapping and select a Docker bind probe or reuse. The private `_proxy-preflight` recipe runs it before preparation. |
 | `bind-check` | Exit successfully after Docker allocates service ports. Start no listener or DNS operation. The preflight recipe invokes it only when needed. |
 | `verify` | Check trusted HTTPS and the expected application response for every name. Default client port 443; `--port` overrides it, or `--from-compose` reads the published port from Compose JSON on stdin. |
 
@@ -53,6 +53,70 @@ docker compose -f compose.yaml exec -T proxy proxy reload
 ```
 
 Use recreation for changed `.env` values, image versions, or host port mappings. A restart or reload does not replace the container environment. Recreation briefly interrupts service.
+
+## Integrate with existing project recipes
+
+Keep the public integration small: `proxy-plan`, `proxy-up`, and `proxy-verify`. The `proxy-` prefix belongs to consumer recipes; the container commands keep their existing names. `proxy-plan` previews DNS changes only, not container changes or a complete deployment.
+
+If the application already has a deployment recipe, omit `proxy-up` and keep only `proxy-plan` and `proxy-verify` as new public recipes. Copy both private helpers from `examples/justfile`. Make `_proxy-prepare` a dependency of the existing deployment recipe, before any command or dependency that stops or replaces either service. It runs preflight, validates Caddy, and reconciles DNS. Do not use `proxy-up` as preparation: it also replaces the proxy.
+
+After preparation succeeds, deploy the application and recreate the proxy with a bounded health wait. Preserve the proxy's `--force-recreate --wait --wait-timeout 90` behavior so prepared configuration takes effect even if Compose detects no service changes. Run `just proxy-verify` after both services are running. Keep it public for independent checks. A preparation failure leaves the existing containers running but can partially update DNS; a deployment or verification failure does not roll back changes.
+
+Reuse the application's logs, status, and stop recipes for both services. Stopping must preserve the certificate and application volumes. Do not add duplicate proxy-only wrappers; use the maintenance commands below when needed. Keep `set default-list` so bare `just` lists recipes without taking action. Private `_proxy-*` helpers stay out of that list.
+
+## Maintenance commands
+
+Run these from the consumer project, adjusting `-f compose.yaml` if needed. They do not need public Just recipes.
+
+### Validate without DNS writes
+
+Run the private binding helper, then validate serving inputs and Caddy. Preflight can briefly allocate a new host binding, but does not stop the existing proxy. Neither command reconciles DNS.
+
+```sh
+just _proxy-preflight && docker compose -f compose.yaml run --rm --no-deps -T proxy check
+```
+
+For CI that only needs configuration validation, use the second command alone. It does not check host port availability. Tests must use fake credentials, isolated resources, and no public ACME service.
+
+### Reconcile DNS without deploying
+
+Review the plan first. The second command writes address records but does not validate or start the web proxy. Normal deployment already includes this reconciliation.
+
+```sh
+just proxy-plan
+# After reviewing the plan:
+docker compose -f compose.yaml run --rm --no-deps -T proxy dns-sync
+```
+
+### Reload a custom mounted Caddyfile
+
+Validate and reload using the running container's environment:
+
+```sh
+docker compose -f compose.yaml exec -T proxy proxy reload
+```
+
+For changed environment values, image versions, or port mappings, use the normal deployment recipe instead. Reload does not reconcile address records or replace the container environment.
+
+### Inspect or stop only the proxy
+
+Show status, including stopped containers:
+
+```sh
+docker compose -f compose.yaml ps --all proxy
+```
+
+Follow the latest 50 log lines; Ctrl+C leaves the proxy running:
+
+```sh
+docker compose -f compose.yaml logs --tail=50 --follow proxy
+```
+
+Stop only the proxy, preserving the application and certificate volumes:
+
+```sh
+docker compose -f compose.yaml stop proxy
+```
 
 ## DNS behavior and limits
 
