@@ -1,0 +1,4 @@
+interface:
+  display_name: "Caddy Cloudflare Proxy"
+  short_description: "Add HTTPS to Compose apps with Cloudflare DNS"
+  default_prompt: "Use $caddy-cloudflare-proxy to add HTTPS to my Docker Compose application using the supported consumer workflow."
