@@ -1,32 +1,35 @@
 set default-list
 
+# Host-side settings; keep an existing Compose filename and service name.
+export PROXY_COMPOSE_FILE := "compose.yaml"
+export PROXY_SERVICE := "proxy"
+
 # Preview Cloudflare DNS changes only; never writes DNS or plans container changes.
 proxy-plan:
-    docker compose -f compose.yaml run --rm --no-deps -T proxy dns-plan
+    docker compose -f "$PROXY_COMPOSE_FILE" run --rm --no-deps -T "$PROXY_SERVICE" dns-plan
 
 # Prepare before replacement; wait up to 90s for listener health, not TLS.
 proxy-up: _proxy-prepare
-    docker compose -f compose.yaml up -d --no-deps --force-recreate --wait --wait-timeout 90 proxy
+    docker compose -f "$PROXY_COMPOSE_FILE" up -d --no-deps --force-recreate --wait --wait-timeout 90 "$PROXY_SERVICE"
 
 # Check trusted HTTPS and the configured status/body from a temporary client container.
 proxy-verify:
     #!/usr/bin/env bash
     set -euo pipefail
-    docker compose -f compose.yaml config --format json | docker compose -f compose.yaml run --rm --no-deps -T proxy verify --from-compose
+    docker compose -f "$PROXY_COMPOSE_FILE" config --format json "$PROXY_SERVICE" | docker compose -f "$PROXY_COMPOSE_FILE" run --rm --no-deps -T "$PROXY_SERVICE" verify --from-compose --service "$PROXY_SERVICE"
 
 # Validate and reconcile DNS before any application or proxy replacement.
 _proxy-prepare: _proxy-preflight
-    docker compose -f compose.yaml run --rm --no-deps -T proxy prepare
+    docker compose -f "$PROXY_COMPOSE_FILE" run --rm --no-deps -T "$PROXY_SERVICE" prepare
 
 # Validate the host port and probe new bindings without stopping the existing proxy.
 _proxy-preflight:
     #!/usr/bin/env bash
     set -euo pipefail
-    docker compose -f compose.yaml config --quiet
-    running="$(docker compose -f compose.yaml ps --status running --format json proxy)"
-    mode="$(docker compose -f compose.yaml config --format json | docker compose -f compose.yaml run --rm --no-deps -T proxy preflight --running "$running")"
+    running="$(docker compose -f "$PROXY_COMPOSE_FILE" ps --status running --format json "$PROXY_SERVICE")"
+    mode="$(docker compose -f "$PROXY_COMPOSE_FILE" config --format json "$PROXY_SERVICE" | docker compose -f "$PROXY_COMPOSE_FILE" run --rm --no-deps -T "$PROXY_SERVICE" preflight --service "$PROXY_SERVICE" --running "$running")"
     case "$mode" in
         reuse) printf '%s\n' 'The running proxy already owns this host binding; no bind probe needed.' ;;
-        probe) docker compose -f compose.yaml run --rm --no-deps -T --service-ports proxy bind-check ;;
+        probe) docker compose -f "$PROXY_COMPOSE_FILE" run --rm --no-deps -T --service-ports "$PROXY_SERVICE" bind-check ;;
         *) printf '%s\n' 'Unexpected preflight result; refusing deployment.' >&2; exit 1 ;;
     esac

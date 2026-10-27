@@ -18,13 +18,13 @@
 | `PROXY_VERIFY_BODY` | Optional literal UTF-8 substring required within the first 64 KiB of the response. Not printed. |
 | `PROXY_VERIFY_TIMEOUT` | Total verification deadline for all names, 1–600 seconds; default `120`. |
 
-Compose reads `.env` for interpolation, and exported variables take precedence. It passes only selected settings to the container. Credentials belong in runtime environment variables, never build arguments, source files, or committed examples. Docker administrators can inspect container secrets; do not dump resolved Compose configuration or container environments into logs.
+Compose reads `.env` for interpolation, and exported variables take precedence. The example's `environment` section passes only selected settings to the container environment. Credentials belong in runtime environment variables, never build arguments, source files, or committed examples. Docker administrators can inspect container secrets; do not dump resolved Compose configuration or container environments into logs.
 
 The template supports one zone, one DNS target, and one upstream. Separate proxy instances or a deliberately extended configuration are needed for other layouts. Do not treat the image as a Docker auto-discovery controller: it has no Docker socket access and does not find backends automatically.
 
 ## Container commands
 
-The entrypoint is `proxy`; its default command is `serve`.
+The entrypoint is `proxy`; its default command is `serve`. The shell examples below use `compose.yaml` and service `proxy`; substitute your configured filename and service name when different. The executable inside the image is always `proxy`.
 
 | Command | Behavior |
 | --- | --- |
@@ -38,6 +38,8 @@ The entrypoint is `proxy`; its default command is `serve`.
 | `preflight` | Read resolved Compose JSON on stdin; validate one explicit host-IP/TCP-443 mapping and select a Docker bind probe or reuse. The private `_proxy-preflight` recipe runs it before preparation. |
 | `bind-check` | Exit successfully after Docker allocates service ports. Start no listener or DNS operation. The preflight recipe invokes it only when needed. |
 | `verify` | Check trusted HTTPS and the expected application response for every name. Default client port 443; `--port` overrides it, or `--from-compose` reads the published port from Compose JSON on stdin. |
+
+`preflight` and `verify --from-compose` accept `--service NAME` (default `proxy`) to select the service in Compose JSON. The supplied recipes pass the configured service name automatically. They use `config --format json NAME` to reduce unnecessary input, not to enforce credential isolation. Resolved Compose JSON may contain credentials, including shared application settings and service dependencies. Never log it. Existing Compose dependencies are allowed, but the recipes use `--no-deps`; start the application through its own workflow.
 
 One-shot commands use the same image and data volumes as the serving container:
 
@@ -56,17 +58,46 @@ Use recreation for changed `.env` values, image versions, or host port mappings.
 
 ## Integrate with existing project recipes
 
+Set `PROXY_COMPOSE_FILE` and `PROXY_SERVICE` at the top of the consumer `justfile`; defaults are `compose.yaml` and `proxy`. These are host-side Just variables, not container settings or `.env` inputs. Preserve an existing service name rather than renaming it for this integration. For a temporary override:
+
+```sh
+just PROXY_COMPOSE_FILE=compose.production.yaml PROXY_SERVICE=edge proxy-plan
+```
+
+Use the same settings for preparation, deployment, verification, and direct Compose maintenance commands. Pair the recipes with the matching image release; older images might not accept `--service`.
+
 Keep the public integration small: `proxy-plan`, `proxy-up`, and `proxy-verify`. The `proxy-` prefix belongs to consumer recipes; the container commands keep their existing names. `proxy-plan` previews DNS changes only, not container changes or a complete deployment.
 
-If the application already has a deployment recipe, omit `proxy-up` and keep only `proxy-plan` and `proxy-verify` as new public recipes. Copy both private helpers from `examples/justfile`. Make `_proxy-prepare` a dependency of the existing deployment recipe, before any command or dependency that stops or replaces either service. It runs preflight, validates Caddy, and reconciles DNS. Do not use `proxy-up` as preparation: it also replaces the proxy.
+If the application already has a deployment recipe, omit `proxy-up` and keep only `proxy-plan` and `proxy-verify` as new public recipes. Copy the host-side settings and all private helpers from `examples/justfile`. Make `_proxy-prepare` a dependency of the existing deployment recipe, before any command or dependency that stops or replaces either service. It runs preflight, validates Caddy, and reconciles DNS. Do not use `proxy-up` as preparation: it also replaces the proxy.
 
 After preparation succeeds, deploy the application and recreate the proxy with a bounded health wait. Preserve the proxy's `--force-recreate --wait --wait-timeout 90` behavior so prepared configuration takes effect even if Compose detects no service changes. Run `just proxy-verify` after both services are running. Keep it public for independent checks. A preparation failure leaves the existing containers running but can partially update DNS; a deployment or verification failure does not roll back changes.
 
 Reuse the application's logs, status, and stop recipes for both services. Stopping must preserve the certificate and application volumes. Do not add duplicate proxy-only wrappers; use the maintenance commands below when needed. Keep `set default-list` so bare `just` lists recipes without taking action. Private `_proxy-*` helpers stay out of that list.
 
+## Installation, migration, and recovery
+
+### Before deployment
+
+For a new installation, select the explicit host binding, client-reachable DNS target, application network, and persistent volumes. For a migration, first inventory the existing hostnames, routing, authentication, published ports, service names, Compose project identity, and actual certificate volume names. Preserve application security policy in its custom Caddyfile; do not replace it with the default just to adopt this image.
+
+Keep the existing project identity and `/data` and `/config` volume mappings. If importing volumes from another Compose project, explicitly reference those existing volumes rather than letting Compose create empty ones. Keep the service name where possible. Moving a binding owned by another service is not automated: preflight refuses the conflict. Plan a separate cutover instead of disabling the guard.
+
+Before changing a running installation:
+
+1. Retain the previous image's immutable reference or local image, Compose files, custom Caddyfile, deployment settings, and usable credentials. Store secret-bearing backups privately, not in Git or logs. Back up certificate state securely. An old container alone is not a recovery plan.
+2. Pull the chosen proxy image and build or pull application images before cutover. Do not build this proxy image in consumer projects. Keep the previous images available until verification succeeds.
+3. Validate Compose and Caddy, review `proxy-plan`, and finish `_proxy-prepare` before any deployment step stops or replaces a service. The integrated deployment recipe must enforce that ordering. Preparation can partially change DNS even when it fails.
+4. Record the commands that replace services, verify HTTPS, and restore the previous deployment. State which services can be interrupted. Use the normal deployment workflow, then verify from Docker and an intended client. There is no automatic rollback or no-op/reload classification.
+
+### Recover a failed replacement
+
+Restore the previous Compose files, Caddyfile, image reference, and deployment settings, using the same project identity and volumes. Ensure the previous image is available locally. Validate the restored configuration and review a fresh DNS plan before running the normal preparation/deployment workflow. Restore affected application services through their own supported recovery procedure, then verify trusted HTTPS and the expected responses again.
+
+Restoring files does not change the running container's environment or undo DNS writes. Recreate with the restored settings; do not rely on a restart alone. DNS reconciliation is not transactional and does not delete records for names removed from configuration. Inspect partial writes and newly created records separately; resolve conflicts deliberately. Never use `down -v` or delete certificate volumes as a recovery step. Rehearse the application's cutover and recovery procedure with disposable resources before relying on it.
+
 ## Maintenance commands
 
-Run these from the consumer project, adjusting `-f compose.yaml` if needed. They do not need public Just recipes.
+Run these from the consumer project, substituting the configured Compose filename and service name. They do not need public Just recipes.
 
 ### Validate without DNS writes
 

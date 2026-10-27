@@ -10,10 +10,10 @@ import time
 from cloudflare_dns import SyncError, hostnames
 
 
-def published_port(model):
+def published_port(model, service="proxy"):
     """Read the resolved Compose model without displaying its environment/secrets."""
     try:
-        ports = model["services"]["proxy"]["ports"]
+        ports = model["services"][service]["ports"]
         if len(ports) != 1:
             raise ValueError
         port = ports[0]
@@ -37,8 +37,8 @@ def compose_input(stream):
         raise SyncError("Supply resolved Compose JSON on stdin; use the supplied Just recipe. Do not print it: it contains credentials.") from None
 
 
-def preflight(model, running):
-    address, port = published_port(model)
+def preflight(model, running, service="proxy"):
+    address, port = published_port(model, service)
     try:
         # Compose versions emit either an array or one JSON object per line.
         rows = []
@@ -48,7 +48,7 @@ def preflight(model, running):
         if len(rows) > 1:
             raise ValueError
         for row in rows:
-            if row["Service"] != "proxy" or row["State"] != "running":
+            if row["Service"] != service or row["State"] != "running":
                 raise ValueError
             publishers = row.get("Publishers") or []
             for binding in publishers:

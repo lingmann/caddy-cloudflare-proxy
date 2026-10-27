@@ -12,12 +12,12 @@ import operations as ops
 from cloudflare_dns import SyncError
 
 
-def model(**overrides):
-    return {"services": {"proxy": {"ports": [{"target": 443, "published": "9443", "host_ip": "192.168.1.10", "protocol": "tcp", **overrides}]}}}
+def model(service="proxy", **overrides):
+    return {"services": {service: {"ports": [{"target": 443, "published": "9443", "host_ip": "192.168.1.10", "protocol": "tcp", **overrides}]}}}
 
 
-def running(**overrides):
-    return json.dumps({"Service": "proxy", "State": "running", "Publishers": [
+def running(service="proxy", **overrides):
+    return json.dumps({"Service": service, "State": "running", "Publishers": [
         {"URL": "192.168.1.10", "TargetPort": 443, "PublishedPort": 9443, "Protocol": "tcp", **overrides}]})
 
 
@@ -29,7 +29,11 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(ops.preflight(model(), running(URL="192.168.1.11")), "probe")
 
     def test_existing_binding_never_needs_disruption(self):
-        self.assertEqual(ops.preflight(model(), running()), "reuse")
+        for service in ("proxy", "edge"):
+            self.assertEqual(ops.preflight(model(service), running(service), service), "reuse")
+            self.assertEqual(ops.published_port(model(service), service), ("192.168.1.10", 9443))
+        with self.assertRaises(SyncError):
+            ops.preflight(model("edge"), running(), "edge")
         self.assertEqual(ops.preflight(model(), "[" + running() + "]"), "reuse")
         self.assertEqual(ops.preflight(model(host_ip="fd00::1"), running(URL="fd00:0:0:0:0:0:0:1")), "reuse")
 

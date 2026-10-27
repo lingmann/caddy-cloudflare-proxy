@@ -144,11 +144,16 @@ class CommandTests(unittest.TestCase):
     def test_operator_commands_do_not_validate_serving_or_write_dns(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(proxy, "sync") as sync, patch.object(proxy, "validate_caddy") as validate:
             self.assertEqual(proxy.main(["bind-check"]), 0)
-            with patch.object(proxy.operations, "compose_input", return_value={}), patch.object(proxy.operations, "preflight", return_value="probe"):
-                self.assertEqual(proxy.main(["preflight"]), 0)
+            with patch.object(proxy.operations, "compose_input", return_value={}), patch.object(proxy.operations, "preflight", return_value="probe") as preflight:
+                self.assertEqual(proxy.main(["preflight", "--service", "edge"]), 0)
+                preflight.assert_called_once_with({}, "", "edge")
             with patch.object(proxy.operations, "verify") as verify:
                 self.assertEqual(proxy.main(["verify", "--port", "9443"]), 0)
                 verify.assert_called_once_with(os.environ, 9443)
+                with patch.object(proxy.operations, "compose_input", return_value={}), patch.object(proxy.operations, "published_port", return_value=("192.168.1.10", 8443)) as port:
+                    self.assertEqual(proxy.main(["verify", "--from-compose", "--service", "edge"]), 0)
+                    port.assert_called_once_with({}, "edge")
+                    verify.assert_called_with(os.environ, 8443)
             sync.assert_not_called()
             validate.assert_not_called()
 

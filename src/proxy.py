@@ -86,6 +86,8 @@ def main(argv=None):
         command = commands.add_parser(name, help=description, description=description,
                                       epilog=f"Example: proxy {name}" if name not in ("preflight", "verify") else
                                       ("Example: just _proxy-preflight" if name == "preflight" else "Example: proxy verify --port 9443"))
+        if name in ("preflight", "verify"):
+            command.add_argument("--service", default="proxy", help="Compose service to inspect (default: proxy); verify uses this with --from-compose")
         if name == "preflight":
             command.add_argument("--running", default="", help="JSON from docker compose ps --status running --format json proxy")
         if name == "verify":
@@ -96,13 +98,13 @@ def main(argv=None):
     args.command = args.command or "serve"
     try:
         if args.command == "preflight":
-            print(operations.preflight(operations.compose_input(sys.stdin), args.running))
+            print(operations.preflight(operations.compose_input(sys.stdin), args.running, args.service))
             return 0
         if args.command == "bind-check":
             print("Docker allocated the configured host port. No listener or DNS operation started.")
             return 0
         if args.command == "verify":
-            port = operations.published_port(operations.compose_input(sys.stdin))[1] if args.from_compose else args.port
+            port = operations.published_port(operations.compose_input(sys.stdin), args.service)[1] if args.from_compose else args.port
             operations.verify(os.environ, port)
             return 0
         if args.command == "healthcheck":
