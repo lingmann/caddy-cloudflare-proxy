@@ -145,7 +145,7 @@ def verify(env, port):
                 break
             error = bounded_request((name, port, path, status, body), min(5, remaining))
             if error is None:
-                print(f"Verified https://{name}:{port}{path}: trusted TLS, HTTP {status}" + (", body marker matched" if body else ""), flush=True)
+                print(f"Verified https://{name}:{port}{path} - trusted TLS, HTTP {status}" + (", body marker matched" if body else ""), flush=True)
                 del pending[name]
             else:
                 pending[name] = error
